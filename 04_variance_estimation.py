@@ -209,7 +209,74 @@ def _(mo):
       variance follows the mean. Both halves "know" the mean. The next section separates
       the two.
 
-    ## 2. Variance vs expression: fit a curve across all genes
+    ## 2. Variance vs expression
+
+    ### Replicate vs replicate
+
+    The most direct picture: plot one donor against another, gene by gene. If there
+    were no noise every gene would sit on the diagonal; the spread around it is the
+    noise. Two donor pairs per technology:
+
+    * **Array:** log2 intensity, so the axes are already on a log scale.
+    * **RNA-seq:** normalized counts on **log axes** (the data are not transformed; +1
+      only lets genes with 0 reads appear on the plot).
+
+    The dashed lines mark where 95% of genes should fall (±2 SD of the difference
+    between two replicates). For arrays that is a constant-width band using the median
+    gene SD. For RNA-seq it is the NB prediction $\operatorname{Var} = \mu + \phi\mu^2$,
+    with $\phi$ estimated from genes with mean count > 100.
+    """)
+    return
+
+
+@app.cell
+def _(ARRAY_COLOR, SEQ_COLOR, arr, np, plt, seq):
+    _fig, _ax = plt.subplots(2, 2, figsize=(11, 10))
+
+    _sd = np.median(arr.std(axis=1))
+    _g = np.linspace(arr.values.min(), arr.values.max(), 200)
+    for _a, (_i, _j) in zip(_ax[0], ((0, 1), (2, 3))):
+        _a.scatter(arr.iloc[:, _i], arr.iloc[:, _j], s=2, alpha=0.15, color=ARRAY_COLOR)
+        _a.plot(_g, _g, "k-", lw=0.8)
+        for _sign in (-1, 1):
+            _a.plot(_g, _g + _sign * 2 * np.sqrt(2) * _sd, "k--", lw=1)
+        _a.set(xlabel=f"{arr.columns[_i]}  (log2 intensity)", ylabel=f"{arr.columns[_j]}  (log2 intensity)",
+               title=f"Array: constant band, ±{2 * np.sqrt(2) * _sd:.2f} log2 units", aspect="equal")
+
+    _m = seq.mean(axis=1)
+    _phi = np.median(((seq.var(axis=1) - _m) / _m**2)[_m > 100])
+    _mu = np.logspace(0, np.log10(seq.values.max()), 300)
+    _half = 2 * np.sqrt(2 * (_mu + _phi * _mu**2))
+    for _a, (_i, _j) in zip(_ax[1], ((0, 1), (2, 3))):
+        _a.scatter(seq.iloc[:, _i] + 1, seq.iloc[:, _j] + 1, s=2, alpha=0.15, color=SEQ_COLOR)
+        _a.plot(_mu, _mu, "k-", lw=0.8)
+        _a.plot(_mu, _mu + _half, "k--", lw=1, label=f"NB ±2 SD, φ = {_phi:.3f}")
+        _low = _mu - _half
+        _a.plot(_mu[_low >= 1], _low[_low >= 1], "k--", lw=1)
+        _a.set_ylim(0.7, None)
+        _a.set(xscale="log", yscale="log", xlabel=f"{seq.columns[_i]}  (count + 1)",
+               ylabel=f"{seq.columns[_j]}  (count + 1)", title="RNA-seq: funnel, wide at low counts",
+               aspect="equal")
+        _a.legend(frameon=False, fontsize=8, loc="upper left")
+    _fig.tight_layout()
+    _fig
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    * **Array:** the cloud has about the same width along most of the diagonal. One
+      noise level roughly fits most genes. Some pairs (DC3 vs DC4) widen at the low end,
+      where probes are near background: arrays are not perfectly uniform either, but the
+      change is modest compared with RNA-seq.
+    * **RNA-seq:** a funnel. At a few counts, two replicates of the same gene can differ
+      several-fold just from sampling; at thousands of counts they agree closely. On log
+      axes the width tells you the *relative* noise, which falls as $1/\mu + \phi$: it
+      shrinks with expression until it levels off at the biological variability $\phi$.
+      How noisy a gene is depends on how much it is expressed.
+
+    ### Fit a curve across all genes
 
     Plot each gene's variance (donors 1–3) against its mean and fit a smooth curve
     (lowess on the log variance) through all genes at once. RNA-seq is shown on the count
