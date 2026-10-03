@@ -1,0 +1,10 @@
+# downloaded on demand by the notebook (public GEO data)
+data/array/GSE*_series_matrix.txt.gz
+# lab RNA-seq data stays outside the repo (read via BULK_RNASEQ_DIR)
+*.tsv
+!data/array/GPL570_probe2symbol.tsv.gz
+__pycache__/
+__marimo__/
+.venv/
+.DS_Store
+Icon?
