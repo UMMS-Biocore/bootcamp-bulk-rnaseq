@@ -313,52 +313,87 @@ def _(mo):
     mo.md(r"""
     **What to notice**
 
-    * **ACTB:** the depth clusters are gone, but the counts are still right-skewed with a
-      long upper tail. Biological variation is multiplicative, so counts are roughly
-      log-normal, not normal. The array, which reports log intensity, looks normal.
-      Part of ACTB's tail is the public experiment (brown), which sits higher than the
-      lab samples: a between-experiment difference that a model would handle with a
-      batch term.
-    * **GAPDH:** varies very little between samples (CV ≈ 0.3). With that little spread a
-      log-normal is hard to tell from a normal, so GAPDH happens to look fine.
-    * Do **not** take log2 of the counts here: that would make them look normal again and
-      hide the difference we are trying to show.
+    * **GAPDH and ACTB are poor test cases.** They have thousands of counts per sample,
+      and a negative binomial (NB) with a large mean is nearly symmetric: its skewness
+      approaches $2\sqrt{\phi}$, about 0.2–0.6 for typical dispersions. So a perfectly
+      NB gene can look normal.
+    * ACTB's long right tail is mostly the public experiment (brown) sitting higher than
+      the lab samples. That is a difference between experiments, not the shape of the
+      count distribution.
+    * Do **not** take log2 of the counts here: that would make them look normal and hide
+      the point.
 
-    ## Is that true for all genes? Skewness across samples
+    ## Stable genes at lower expression
 
-    For every expressed gene, compute the skewness of its values across all samples:
-    0 for a symmetric distribution, > 0 for a long right tail. Array genes: above the 30th
-    percentile of mean intensity (drops background probes). RNA-seq genes: median
-    normalized count > 10.
+    To see the count distribution itself, we need genes that do **not** respond to the
+    stimulations. These six were selected from the data:
+
+    * expression differs little between conditions (condition explains < 40% of the
+      variance; with 22 conditions and 81 samples, pure noise alone gives about 26%)
+    * no difference between the three experiments (< 5% of the variance)
+    * spread close to sampling noise (variance / mean < 1.6, where Poisson = 1)
+
+    The table recomputes these numbers. Each histogram shows the gene's depth-normalized
+    counts across all 81 samples, with two fits using the same mean and variance: the
+    **negative binomial** (black) and the **normal** (blue).
     """)
     return
 
 
 @app.cell
-def _(ARRAY_COLOR, SEQ_COLOR, arr, norm_counts, np, plt, stats):
-    _am = arr.mean(axis=1)
-    _sk_a = stats.skew(arr[_am > _am.quantile(0.3)].values, axis=1)
-    _sk_s = stats.skew(norm_counts[norm_counts.median(axis=1) > 10].values, axis=1)
+def _(mo, norm_counts, np, pd, plt, samples, stats):
+    STABLE_GENES = ["ZNF483", "NAT14", "SLC25A53", "N6AMT1", "METTL2B", "CUL5"]
 
-    _fig, _ax = plt.subplots(figsize=(8, 3.4))
-    _bins = np.linspace(-3, 6, 80)
-    _ax.hist(np.clip(_sk_a, -3, 6), bins=_bins, alpha=0.6, density=True, color=ARRAY_COLOR,
-             label=f"array, log2 intensity ({len(_sk_a):,} genes, median {np.median(_sk_a):.2f})")
-    _ax.hist(np.clip(_sk_s, -3, 6), bins=_bins, alpha=0.6, density=True, color=SEQ_COLOR,
-             label=f"RNA-seq, normalized counts ({len(_sk_s):,} genes, median {np.median(_sk_s):.2f})")
-    _ax.axvline(0, color="k", lw=0.8)
-    _ax.set(xlabel="skewness across samples", yticks=[])
-    _ax.legend(frameon=False, fontsize=8)
+
+    def _var_explained(x, labels):
+        group_means = x.groupby(labels.values).transform("mean")
+        return 1 - ((x - group_means) ** 2).sum() / ((x - x.mean()) ** 2).sum()
+
+
+    _rows = []
+    _fig, _axes = plt.subplots(2, 3, figsize=(14, 6.5))
+    for _ax, _g in zip(_axes.flat, STABLE_GENES):
+        _y = norm_counts.loc[_g]
+        _m, _v = _y.mean(), _y.var()
+        _phi = max((_v - _m) / _m**2, 1e-6)
+        _w = max(1, int(np.ceil((_y.max() + 1) / 30)))
+        _ax.hist(_y, bins=np.arange(-0.5, _y.max() + _w + 0.5, _w), density=True, color="#C44E52", alpha=0.7)
+        _k = np.arange(0, _y.max() + 1)
+        _ax.plot(_k, stats.nbinom.pmf(_k, 1 / _phi, 1 / (1 + _phi * _m)), "o" if len(_k) < 40 else "-",
+                 ms=3, lw=1.5, color="k", label="negative binomial")
+        _x = np.linspace(min(_m - 3.5 * np.sqrt(_v), -0.5), _y.max() + _w, 300)
+        _ax.plot(_x, stats.norm.pdf(_x, _m, np.sqrt(_v)), "-", color="#4C72B0", lw=2, label="normal")
+        _ax.axvline(0, color="gray", lw=0.5)
+        _ax.set(title=f"{_g}  (mean {_m:.1f})", xlabel="normalized count", yticks=[])
+        _rows.append({
+            "gene": _g,
+            "mean": round(_m, 1),
+            "variance / mean": round(_v / _m, 2),
+            "zeros": int((_y == 0).sum()),
+            "% var. condition": round(100 * _var_explained(_y, samples.group)),
+            "% var. experiment": round(100 * _var_explained(_y, samples.experiment)),
+            "skewness": round(stats.skew(_y), 2),
+            "Shapiro p": f"{stats.shapiro(_y).pvalue:.1g}",
+        })
+    _axes.flat[0].legend(frameon=False, fontsize=8)
     _fig.tight_layout()
-    _fig
+    mo.vstack([_fig, mo.ui.table(pd.DataFrame(_rows), selection=None, show_download=False)])
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    Caveat: both datasets pool several conditions, so part of the skew is biology
-    (induced genes). That affects both technologies equally.
+    **What to notice**
+
+    * At a mean of 1–4 counts the data are a handful of integers piled against zero. The
+      NB fits; the normal is skewed the wrong way and puts probability on **negative
+      counts**.
+    * By about 10 counts the NB and the normal nearly coincide, and from there up the
+      shape alone can't tell them apart.
+    * So the shape of one gene's histogram is only part of the argument. The stronger
+      reason for a count model is the next section: the variance is a known function of
+      the mean.
 
     ## Mean vs variance within replicates
 
