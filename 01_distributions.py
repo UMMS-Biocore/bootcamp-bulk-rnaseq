@@ -391,9 +391,136 @@ def _(mo):
       counts**.
     * By about 10 counts the NB and the normal nearly coincide, and from there up the
       shape alone can't tell them apart.
-    * So the shape of one gene's histogram is only part of the argument. The stronger
-      reason for a count model is the next section: the variance is a known function of
-      the mean.
+    * Below roughly 10 counts the normal fails. The next section asks how many genes
+      fall in that range, in TPM terms.
+
+    ## At what expression level does a normal stop fitting the counts?
+
+    Counts are hard to interpret as an expression level: the same gene gives 10× more
+    reads in a library sequenced 10× deeper, and long genes collect more reads than short
+    ones. **TPM** (transcripts per million) corrects for both:
+
+    $$\text{TPM}_g = 10^6 \cdot \frac{y_g / L_g}{\sum_h y_h / L_h}$$
+
+    where $L_g$ is the gene's length (merged exon length from GENCODE v44, stored in
+    `data/genes/`).
+
+    For each gene in a replicate group:
+
+    1. Compute its mean TPM and its mean count $\mu$.
+    2. Assume its counts follow a negative binomial $\text{NB}(\mu, \phi)$, with $\phi$ the
+       group's dispersion (median moment estimate among genes with mean count > 100).
+    3. Compare that NB with a normal of the same mean and variance. The **misfit** is
+       the largest gap between their cumulative distributions (0 = identical; 0.05 = the
+       normal gets some cumulative probability wrong by 5 percentage points).
+
+    We do this for a deeply sequenced group (public controls, ~27 M reads) and a
+    shallow one (lab UVB mock, ~3 M reads). Use the slider to set the misfit you would
+    call "poorly fit".
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    misfit_cut = mo.ui.slider(0.02, 0.2, step=0.01, value=0.05, label="misfit threshold", show_value=True)
+    misfit_cut
+    return (misfit_cut,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    The left panel shows, for genes binned by TPM, the fraction whose counts are poorly
+    fit by a normal. The dashed lines mark the TPM below which most genes (> 50%) are
+    misfit. The right panel plots the same fractions against mean count; the two groups
+    collapse onto one curve, because the fit depends only on the count.
+    """)
+    return
+
+
+@app.cell
+def _(DATA_DIR, counts, misfit_cut, mo, np, pd, plt, stats):
+    _length = pd.read_csv(DATA_DIR / "genes" / "gencode_v44_gene_length.tsv.gz", sep="\t", index_col=0)["exon_length"]
+    _groups = {
+        "deep: public controls": [c for c in counts.columns if c.startswith("pub_Ctrl")],
+        "shallow: lab UVB mock": [c for c in counts.columns if c.endswith("_M")],
+    }
+    _colors = dict(zip(_groups, ["#937860", "#C44E52"]))
+
+
+    def _misfit_curve(phi):
+        """Max CDF gap between NB(mu, phi) and a moment-matched normal, on a grid of mu."""
+        grid = np.logspace(-2, 4, 300)
+        gaps = []
+        for mu in grid:
+            sd = np.sqrt(mu + phi * mu**2)
+            k = np.arange(0, int(mu + 10 * sd) + 2)
+            nb = stats.nbinom.cdf(k, 1 / phi, 1 / (1 + phi * mu))
+            gaps.append(np.max(np.abs(nb - stats.norm.cdf((k + 0.5 - mu) / sd))))
+        return grid, np.array(gaps)
+
+
+    _fig, _ax = plt.subplots(1, 2, figsize=(14, 4))
+    _tpm_bins = np.logspace(-2, 3, 26)
+    _rows = []
+    for _name, _cols in _groups.items():
+        _y = counts.loc[counts.index.intersection(_length.index), _cols]
+        _y = _y[_y.sum(axis=1) > 0]
+        _mu = (_y / (_y.sum() / _y.sum().mean())).mean(axis=1)
+        _rpk = _y.div(_length[_y.index], axis=0)
+        _tpm = (_rpk / _rpk.sum() * 1e6).mean(axis=1)
+        _phi = np.median(((_y.var(axis=1) - _mu) / _mu**2)[_mu > 100])
+        _grid, _gap = _misfit_curve(_phi)
+        _bad = np.interp(np.log10(_mu), np.log10(_grid), _gap) > misfit_cut.value
+
+        _bin = np.digitize(_tpm, _tpm_bins)
+        _frac = pd.Series(_bad).groupby(_bin).mean()
+        _centers = np.sqrt(_tpm_bins[:-1] * _tpm_bins[1:])
+        _ok = (_frac.index > 0) & (_frac.index < len(_tpm_bins))
+        _x = _centers[_frac.index[_ok] - 1]
+        _ax[0].plot(_x, 100 * _frac[_ok].values, "o-", color=_colors[_name], label=_name)
+        _above = _x[100 * _frac[_ok].values <= 50]
+        _tpm_cut = _above.min() if len(_above) else np.nan
+        _ax[0].axvline(_tpm_cut, color=_colors[_name], ls="--", lw=1)
+
+        _cbins = np.logspace(-2, 4, 31)
+        _cfrac = pd.Series(_bad).groupby(np.digitize(_mu, _cbins)).mean()
+        _cok = (_cfrac.index > 0) & (_cfrac.index < len(_cbins))
+        _ax[1].plot(np.sqrt(_cbins[:-1] * _cbins[1:])[_cfrac.index[_cok] - 1], 100 * _cfrac[_cok].values,
+                    "o-", color=_colors[_name], label=_name)
+        _rows.append({
+            "group": _name,
+            "mean depth (M reads)": round(_y.sum().mean() / 1e6, 1),
+            "dispersion φ": round(_phi, 3),
+            "TPM below which most genes misfit": round(_tpm_cut, 2),
+            "% of detected genes below it": round(100 * (_tpm < _tpm_cut).mean()),
+            "% misfit overall": round(100 * _bad.mean()),
+        })
+    _ax[0].set(xscale="log", xlabel="mean TPM", ylabel="% of genes poorly fit by a normal",
+               title="Normal misfit vs expression level (TPM)")
+    _ax[1].set(xscale="log", xlabel="mean count", ylabel="% of genes poorly fit by a normal",
+               title="Same, vs mean count")
+    for _a in _ax:
+        _a.legend(frameon=False, fontsize=8)
+        _a.set_ylim(-3, 103)
+    _fig.tight_layout()
+    mo.vstack([_fig, mo.ui.table(pd.DataFrame(_rows), selection=None, show_download=False)])
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    **What to notice**
+
+    * In the deep libraries the normal breaks down below roughly 0.3 TPM; in the shallow
+      ones below roughly 1 TPM. Either way that is about a quarter of the detected genes.
+    * The TPM cutoff is not a property of the gene: sequencing 10× deeper lowers it,
+      because what matters is the **count**. The right panel shows this.
+    * Above a few TPM a normal describes each gene's counts well. That alone does not
+      make a linear model fine: the variance still depends on the mean (next section),
+      and an experiment covers both high- and low-count genes.
 
     ## Mean vs variance within replicates
 
