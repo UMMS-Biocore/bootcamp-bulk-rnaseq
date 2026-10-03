@@ -142,7 +142,7 @@ def _(np):
 @app.cell
 def _(mo):
     mo.md(r"""
-    **Code: one gene, three technologies.** Draw 3000 biological replicates of the same gene, measure each with all three technologies, and plot the histograms. The summary line compares the observed count variance with the Poisson and negative-binomial predictions.
+    **Code: one gene, three technologies.** Draw 3000 biological replicates of the same gene, measure each with all three technologies, and plot the histograms, each on the scale the technology reports (Ct, log2 intensity, read counts). The black curve is the normal distribution with the same mean and SD, i.e. what a linear model assumes. The summary line compares the observed count variance with the Poisson and negative-binomial predictions.
     """)
     return
 
@@ -159,6 +159,7 @@ def _(
     phi_slider,
     plt,
     sim_abundance,
+    stats,
 ):
     _rng = np.random.default_rng(42)
     _mu, _phi = mu_slider.value, phi_slider.value
@@ -167,18 +168,18 @@ def _(
     _arr = measure_array(_rng, _lam)
     _cnt = measure_seq(_rng, _lam)
 
-    _fig, _ax = plt.subplots(1, 4, figsize=(14, 3.2))
-    _ax[0].hist(_ct, bins=40, color=COLORS["qpcr"])
-    _ax[0].set(title="qPCR", xlabel="Ct")
-    _ax[1].hist(_arr, bins=40, color=COLORS["array"])
-    _ax[1].set(title="Microarray", xlabel="log2 intensity")
+    _fig, _ax = plt.subplots(1, 3, figsize=(13, 3.4))
     _bins = np.arange(-0.5, _cnt.max() + 1.5, max(1, int(np.ceil((_cnt.max() + 1) / 60))))
-    _ax[2].hist(_cnt, bins=_bins, color=COLORS["seq"])
-    _ax[2].set(title="RNA-seq (raw counts)", xlabel="reads")
-    _ax[3].hist(np.log2(_cnt + 1), bins=40, color=COLORS["seq"], alpha=0.7)
-    _ax[3].set(title="RNA-seq log2(count + 1)", xlabel="log2(reads + 1)")
-    for _a in _ax:
-        _a.set_yticks([])
+    for _a, _v, _b, _c, _t, _xl in (
+        (_ax[0], _ct, 40, COLORS["qpcr"], "qPCR", "Ct"),
+        (_ax[1], _arr, 40, COLORS["array"], "Microarray", "log2 intensity"),
+        (_ax[2], _cnt, _bins, COLORS["seq"], "RNA-seq", "read count"),
+    ):
+        _a.hist(_v, bins=_b, density=True, color=_c, alpha=0.8)
+        _xx = np.linspace(_v.min(), _v.max(), 300)
+        _a.plot(_xx, stats.norm.pdf(_xx, _v.mean(), _v.std()), "k-", lw=1.5, label="normal, same mean & SD")
+        _a.set(title=_t, xlabel=_xl, yticks=[])
+    _ax[0].legend(frameon=False, fontsize=8)
     _fig.tight_layout()
 
     _summary = mo.md(
@@ -198,10 +199,11 @@ def _(mo):
     mo.md(r"""
     **Things to try**
 
-    * Set μ to 0.3–3. The counts are a handful of integers piled up at zero.
-      No transformation turns that into a bell curve — `log2(x+1)` just relabels the bars.
-    * Set μ to 1000+. Counts look continuous and roughly symmetric; on the log scale
-      they look a lot like the qPCR/array data.
+    * Set μ to 0.3–3. The counts are a handful of integers piled up at zero, nothing like
+      the normal curve.
+    * Set μ to 30–300 with φ ≈ 0.2+. Counts are right-skewed: biological variation is
+      multiplicative, so counts are roughly *log*-normal, not normal. The qPCR and array
+      measurements are already on a log scale, so the same biology looks normal there.
     * Increase φ. Every technology gets wider (that's biology), but for counts the
       variance/mean ratio grows with μ: extra-Poisson variance is $\phi\mu^2$.
     * Low μ on the array: the signal sinks into background. High μ: saturation.
@@ -242,7 +244,7 @@ def _(mo):
 @app.cell
 def _(mo):
     mo.md(r"""
-    **Code: mean–variance across genes.** Simulate 3000 genes with means from 0.1 to 10,000 reads, measure each in *n* replicates, then plot per-gene spread against per-gene mean: count variance (log–log, with Poisson and NB curves), SD of log2 counts, and SD of log2 array intensity.
+    **Code: mean–variance across genes.** Simulate 3000 genes with means from 0.1 to 10,000 reads, measure each in *n* replicates, then plot per-gene spread against per-gene mean, each on the scale the technology reports: count variance vs mean count (log–log axes, with Poisson and NB curves) and SD vs mean of the array's log2 intensity.
     """)
     return
 
@@ -269,7 +271,7 @@ def _(
     _keep = (_m > 0) & (_v > 0)
     _grid = np.logspace(-1, 4, 200)
 
-    _fig, _ax = plt.subplots(1, 3, figsize=(14, 3.8))
+    _fig, _ax = plt.subplots(1, 2, figsize=(11, 3.8))
     _ax[0].scatter(_m[_keep], _v[_keep], s=3, alpha=0.3, color=COLORS["seq"])
     _ax[0].plot(_grid, _grid, "k--", lw=1, label="Poisson: var = μ")
     _ax[0].plot(_grid, _grid + _phi * _grid**2, "k-", lw=1.5, label="NB: var = μ + φμ²")
@@ -277,15 +279,8 @@ def _(
                title="RNA-seq counts")
     _ax[0].legend(frameon=False, fontsize=8)
 
-    _l = np.log2(_cnt + 1)
-    _ax[1].scatter(_l.mean(1), _l.std(1, ddof=1), s=3, alpha=0.3, color=COLORS["seq"])
-    _ax[1].axhline(np.sqrt(_phi) / np.log(2), color="k", lw=1, ls=":",
-                   label="high-count limit ≈ √φ / ln 2")
-    _ax[1].set(xlabel="mean log2(count+1)", ylabel="SD", title="RNA-seq, log2(count+1)")
-    _ax[1].legend(frameon=False, fontsize=8)
-
-    _ax[2].scatter(_arr.mean(1), _arr.std(1, ddof=1), s=3, alpha=0.3, color=COLORS["array"])
-    _ax[2].set(xlabel="mean log2 intensity", ylabel="SD", title="Microarray, log2 intensity")
+    _ax[1].scatter(_arr.mean(1), _arr.std(1, ddof=1), s=3, alpha=0.3, color=COLORS["array"])
+    _ax[1].set(xlabel="mean log2 intensity", ylabel="SD", title="Microarray, log2 intensity", ylim=(0, None))
     _fig.tight_layout()
     _fig
     return
@@ -299,13 +294,13 @@ def _(mo):
     * **Counts:** variance is tied to the mean. Low-count genes hug the Poisson line
       (sampling noise dominates); high-count genes follow $\phi\mu^2$ (biology dominates).
       A test that assumes one shared $\sigma^2$ is wrong almost everywhere.
-    * **log2(count+1):** the log *mostly* stabilizes variance for highly expressed genes,
-      but low-count genes have a hump of extra noise and then collapse toward zero spread.
-      This is the motivation for `voom` (model this trend) and for `DESeq2`/`edgeR`
-      (model the counts directly).
-    * **Array:** after the log, spread is roughly constant except where background or
-      saturation compresses it. This is why `limma` (moderated t-tests on log
-      intensities) worked so well for arrays.
+      The variance spans ~8 orders of magnitude across genes.
+    * **Array:** the measurement is already a log intensity, and its spread is roughly
+      constant across expression levels, except where background or saturation
+      compresses it. One $\sigma^2$ is a reasonable assumption, which is why linear models
+      (`limma`) work well for arrays.
+    * So for counts we use a model whose variance is a function of the mean:
+      the negative binomial GLM (`DESeq2`, `edgeR`).
     """)
     return
 
@@ -328,7 +323,7 @@ def _(mo):
 @app.cell
 def _(mo):
     mo.md(r"""
-    **Code: load the data.** `load_array` downloads the GSE8658 series matrix (cached in `data/array/`), log2-transforms the GC-RMA values, maps probes to genes and keeps the highest-expressed probe per gene. `load_rnaseq` reads the three DC raw-count tables, keeps genes present in all of them, and drops libraries under 1 M reads. The RNA-seq folder can be changed with the `BULK_RNASEQ_DIR` environment variable.
+    **Code: load the data.** `load_array` downloads the GSE8658 series matrix (cached in `data/array/`), log2-transforms the GC-RMA values, maps probes to genes and keeps the highest-expressed probe per gene. `load_rnaseq` reads the three DC raw-count tables, keeps genes present in all of them, and drops libraries under 1 M reads. Normalized counts rescale each library to the median library size; they stay on the count scale (no log). The RNA-seq folder can be changed with the `BULK_RNASEQ_DIR` environment variable.
     """)
     return
 
@@ -402,13 +397,14 @@ def _(Path, mo, np, pd):
     if not RNASEQ_DIR.exists():
         mo.stop(True, mo.callout(mo.md(f"RNA-seq folder not found: `{RNASEQ_DIR}`. Set `BULK_RNASEQ_DIR`."), kind="warn"))
     seq_counts, seq_samples = load_rnaseq()
-    seq_cpm = seq_counts / seq_counts.sum() * 1e6
+    # scale every library to the median library size (no log): "normalized counts"
+    seq_norm = seq_counts / seq_counts.sum() * seq_counts.sum().median()
     mo.md(
         f"Loaded **{arr_genes.shape[1]} arrays** × {arr_genes.shape[0]:,} genes and "
         f"**{seq_counts.shape[1]} RNA-seq libraries** × {seq_counts.shape[0]:,} genes "
         f"(library sizes {seq_samples.lib_size.min() / 1e6:.1f}–{seq_samples.lib_size.max() / 1e6:.0f} M reads)."
     )
-    return arr_genes, arr_samples, seq_counts, seq_cpm, seq_samples
+    return arr_genes, arr_samples, seq_counts, seq_norm, seq_samples
 
 
 @app.cell
@@ -417,9 +413,9 @@ def _(mo):
     ### Mean–variance in replicate groups
 
     Pick one homogeneous group per technology (same cell state, different donors) so the
-    spread is biological + technical noise, not treatment. Both are shown on the log2
-    scale, which is how we would feed them to a linear model. The right panel puts the
-    two trends on a common x-axis (expression percentile).
+    spread is biological + technical noise, not treatment. Each technology is shown on the
+    scale it reports: log2 intensity for arrays, normalized **counts** for RNA-seq.
+    The right panel compares how much the SD changes with expression level in each.
     """)
     return
 
@@ -453,7 +449,7 @@ def _(arr_samples, mo, seq_samples):
 @app.cell
 def _(mo):
     mo.md(r"""
-    **Code: real mean–variance plots.** For each technology, compute every gene's mean and SD across the replicate group on the log2 scale (RNA-seq counts are first scaled to a common library size). A lowess curve shows the trend. Panel 3 shows RNA-seq on the count scale against the Poisson line. Panel 4 overlays both trends against expression percentile so the two technologies share an x-axis.
+    **Code: real mean–variance plots.** For each technology, compute every gene's mean and SD across the replicate group: arrays on log2 intensity, RNA-seq on counts scaled to a common library size. A lowess curve shows the trend (fitted on log–log axes for counts). Panel 3 plots both trends against expression percentile, each divided by its own median SD, so the y-axis reads "how many times noisier than a typical gene".
     """)
     return
 
@@ -475,40 +471,39 @@ def _(
 
     _A = arr_genes.loc[:, arr_samples.group == arr_group.value]
     _S = seq_counts.loc[:, seq_samples.group == seq_group.value]
-    _S = _S[(_S > 0).any(axis=1)]
-    _norm = _S / _S.sum() * _S.sum().mean()  # simple library-size scaling
-    _L = np.log2(_norm + 1)
+    _S = _S[(_S > 0).all(axis=1)]  # expressed in every sample of the group
+    _norm = _S / _S.sum() * _S.sum().mean()  # simple library-size scaling, count scale
 
     _a_m, _a_sd = _A.mean(axis=1), _A.std(axis=1)
-    _s_m, _s_sd = _L.mean(axis=1), _L.std(axis=1)
+    _s_m, _s_sd = _norm.mean(axis=1), _norm.std(axis=1)
+    _s_m, _s_sd = _s_m[_s_sd > 0], _s_sd[_s_sd > 0]
     _a_fit = _lowess(_a_sd, _a_m, frac=0.2, return_sorted=True)
-    _s_fit = _lowess(_s_sd, _s_m, frac=0.2, return_sorted=True)
+    _s_fit = 10 ** _lowess(np.log10(_s_sd), np.log10(_s_m), frac=0.2, return_sorted=True)
 
-    _fig, _ax = plt.subplots(1, 4, figsize=(17, 3.9))
+    _fig, _ax = plt.subplots(1, 3, figsize=(15, 4))
     _ax[0].scatter(_a_m, _a_sd, s=2, alpha=0.15, color=COLORS["array"])
     _ax[0].plot(*_a_fit.T, "k-", lw=2)
-    _ax[0].set(xlabel="mean log2 intensity", ylabel="SD (log2)", title=f"Array: {arr_group.value} (n={_A.shape[1]})")
+    _ax[0].set(xlabel="mean log2 intensity", ylabel="SD (log2 intensity)", ylim=(0, np.quantile(_a_sd, 0.999)),
+               title=f"Array: {arr_group.value} (n={_A.shape[1]})")
+
     _ax[1].scatter(_s_m, _s_sd, s=2, alpha=0.15, color=COLORS["seq"])
-    _ax[1].plot(*_s_fit.T, "k-", lw=2)
-    _ax[1].set(xlabel="mean log2(norm. count + 1)", ylabel="SD (log2)", title=f"RNA-seq: {seq_group.value} (n={_S.shape[1]})")
-    _ymax = np.quantile(np.r_[_a_sd, _s_sd], 0.999)
-    _ax[0].set_ylim(0, _ymax)
-    _ax[1].set_ylim(0, _ymax)
+    _ax[1].plot(*_s_fit.T, "k-", lw=2, label="trend")
+    _g = np.logspace(np.log10(_s_m.min()), np.log10(_s_m.max()), 100)
+    _ax[1].plot(_g, np.sqrt(_g), "k--", lw=1, label="Poisson: SD = √mean")
+    _ax[1].set(xscale="log", yscale="log", xlabel="mean normalized count", ylabel="SD (counts)",
+               title=f"RNA-seq: {seq_group.value} (n={_S.shape[1]})")
+    _ax[1].legend(frameon=False, fontsize=8)
 
-    _nm, _nv = _norm.mean(axis=1), _norm.var(axis=1)
-    _ok = (_nm > 0) & (_nv > 0)
-    _ax[2].scatter(_nm[_ok], _nv[_ok], s=2, alpha=0.15, color=COLORS["seq"])
-    _g = np.logspace(np.log10(_nm[_ok].min()), np.log10(_nm.max()), 100)
-    _ax[2].plot(_g, _g, "k--", lw=1, label="Poisson: var = mean")
-    _ax[2].set(xscale="log", yscale="log", xlabel="mean count", ylabel="variance", title="RNA-seq, count scale")
-    _ax[2].legend(frameon=False, fontsize=8)
-
-    for _m, _fit, _c, _lab in ((_a_m, _a_fit, COLORS["array"], "array"), (_s_m, _s_fit, COLORS["seq"], "RNA-seq")):
+    for _m, _sd, _fit, _c, _lab in (
+        (_a_m, _a_sd, _a_fit, COLORS["array"], "array (log2 intensity)"),
+        (_s_m, _s_sd, _s_fit, COLORS["seq"], "RNA-seq (counts)"),
+    ):
         _pct = np.searchsorted(np.sort(_m.values), _fit[:, 0]) / len(_m) * 100
-        _ax[3].plot(_pct, _fit[:, 1], color=_c, lw=2.5, label=_lab)
-    _ax[3].set(xlabel="expression percentile (within technology)", ylabel="SD trend (log2)",
-               title="Trends on a common axis", ylim=(0, None))
-    _ax[3].legend(frameon=False)
+        _ax[2].plot(_pct, _fit[:, 1] / np.median(_sd), color=_c, lw=2.5, label=_lab)
+    _ax[2].axhline(1, color="gray", lw=0.5)
+    _ax[2].set(yscale="log", xlabel="expression percentile (within technology)",
+               ylabel="SD trend / median SD", title="How much does SD depend on level?")
+    _ax[2].legend(frameon=False, fontsize=8)
     _fig.tight_layout()
     _fig
     return
@@ -519,16 +514,14 @@ def _(mo):
     mo.md(r"""
     **Reading the real data (be honest with the class)**
 
-    * **Both** technologies have a mean–SD trend on the log scale. Arrays aren't perfectly
-      homoscedastic: GC-RMA squeezes background probes toward a floor (SD → 0 at the low
-      end) and mid-range probes are noisiest.
-    * The RNA-seq trend is **steeper and has a known cause**: at low counts Poisson sampling
-      noise dominates (the points sitting on the dashed line in panel 3), so the log-scale SD
-      climbs as expression drops, until genes have so many zeros that the SD collapses.
-      This variance is a *function of the mean*, which is exactly what a NB GLM encodes.
-    * For arrays, `limma` with an intensity trend (`eBayes(trend=TRUE)`) is enough.
-      For RNA-seq you can either model the counts (DESeq2/edgeR GLMs) or estimate this
-      trend and pass it as precision weights to a linear model (`limma-voom`).
+    * **Arrays:** the SD of log2 intensity varies only a few-fold across the whole
+      expression range (GC-RMA squeezes background probes toward a floor, and mid-range
+      probes are a bit noisier). A single $\sigma^2$ per gene, or a gentle trend
+      (`limma`, `eBayes(trend=TRUE)`), is a fine model.
+    * **RNA-seq counts:** the SD grows with the mean over several orders of magnitude.
+      Low-count genes sit near the Poisson line (sampling noise); high-count genes rise
+      above it (biological variation, $\phi\mu^2$). The variance is a *function of the
+      mean*, which is exactly what the negative binomial GLM encodes.
     """)
     return
 
@@ -539,8 +532,8 @@ def _(mo):
     ### One gene across many samples
 
     Now pool *all* samples (every condition, every donor) and look at a single
-    housekeeping gene. Pick a highly expressed one (GAPDH, ACTB, B2M) and a low one (TBP,
-    GUSB, HPRT1).
+    housekeeping gene, each technology on the scale it reports. Start with ACTB or B2M,
+    then compare with GAPDH.
     """)
     return
 
@@ -557,7 +550,7 @@ def _(mo):
 def _(arr_genes, mo, seq_counts):
     _hk = ["GAPDH", "ACTB", "B2M", "PPIA", "RPLP0", "HPRT1", "GUSB", "TBP", "HMBS", "POLR2A"]
     _common = sorted(set(arr_genes.index) & set(seq_counts.index))
-    hk_gene = mo.ui.dropdown([g for g in _hk if g in _common], value="GAPDH", label="housekeeping gene")
+    hk_gene = mo.ui.dropdown([g for g in _hk if g in _common], value="ACTB", label="housekeeping gene")
     any_gene = mo.ui.text(placeholder="or type any gene symbol", label="")
     mo.hstack([hk_gene, any_gene], justify="start", gap=2)
     return any_gene, hk_gene
@@ -566,7 +559,7 @@ def _(arr_genes, mo, seq_counts):
 @app.cell
 def _(mo):
     mo.md(r"""
-    **Code: one gene across all samples.** Histogram of the gene in all arrays (log2), in all RNA-seq libraries as raw counts (stacked by experiment), and as log2 CPM. The bottom row has normal QQ plots with a Shapiro–Wilk p-value. The table shows how strongly the raw count tracks library size.
+    **Code: one gene across all samples.** Histogram of the gene in all arrays (log2 intensity, the array's native scale) and in all RNA-seq libraries as raw counts and as normalized counts (both stacked by experiment, no log). The bottom row has normal QQ plots with a Shapiro–Wilk p-value. The table shows how strongly the raw count tracks library size.
     """)
     return
 
@@ -582,7 +575,7 @@ def _(
     pd,
     plt,
     seq_counts,
-    seq_cpm,
+    seq_norm,
     seq_samples,
     stats,
 ):
@@ -592,21 +585,20 @@ def _(
 
     _a = arr_genes.loc[_gene]
     _raw = seq_counts.loc[_gene]
-    _lcpm = np.log2(seq_cpm.loc[_gene] + 1)
+    _nrm = seq_norm.loc[_gene]
 
     _fig, _ax = plt.subplots(2, 3, figsize=(15, 6.5), gridspec_kw={"height_ratios": [1.3, 1]})
     _ax[0, 0].hist(_a, bins=20, color=COLORS["array"])
     _ax[0, 0].set(title=f"Array {_gene}: log2 intensity (n={len(_a)})", xlabel="log2 intensity")
     _src_colors = {"UVB": "#C44E52", "TNF_IL32": "#8172B3", "public": "#937860"}
-    _bins = np.histogram_bin_edges(_raw, bins=25)
-    _ax[0, 1].hist([_raw[seq_samples.source == s] for s in _src_colors], bins=_bins, stacked=True,
-                   color=list(_src_colors.values()), label=list(_src_colors))
-    _ax[0, 1].set(title=f"RNA-seq {_gene}: raw counts (n={len(_raw)})", xlabel="reads")
+    for _j, (_v, _t) in ((1, (_raw, "raw counts")), (2, (_nrm, "normalized counts"))):
+        _bins = np.histogram_bin_edges(_v, bins=25)
+        _ax[0, _j].hist([_v[seq_samples.source == s] for s in _src_colors], bins=_bins, stacked=True,
+                        color=list(_src_colors.values()), label=list(_src_colors))
+        _ax[0, _j].set(title=f"RNA-seq {_gene}: {_t} (n={len(_v)})", xlabel="reads")
     _ax[0, 1].legend(frameon=False, fontsize=8, title="experiment", title_fontsize=8)
-    _ax[0, 2].hist(_lcpm, bins=20, color=COLORS["seq"])
-    _ax[0, 2].set(title=f"RNA-seq {_gene}: log2(CPM + 1)", xlabel="log2 CPM")
 
-    for _j, (_v, _c, _lab) in enumerate(((_a, COLORS["array"], "array log2"), (_raw, COLORS["seq"], "raw counts"), (_lcpm, COLORS["seq"], "log2 CPM"))):
+    for _j, (_v, _c, _lab) in enumerate(((_a, COLORS["array"], "array log2"), (_raw, COLORS["seq"], "raw counts"), (_nrm, COLORS["seq"], "normalized counts"))):
         stats.probplot(_v, dist="norm", plot=_ax[1, _j])
         _ax[1, _j].get_lines()[0].set(markerfacecolor=_c, markeredgecolor=_c, markersize=4)
         _ax[1, _j].set(title=f"normal QQ: {_lab}  (Shapiro p = {stats.shapiro(_v).pvalue:.2g})")
@@ -631,17 +623,67 @@ def _(mo):
     mo.md(r"""
     **What this shows (and doesn't)**
 
-    * **Array, GAPDH/ACTB:** one bell-shaped log2 intensity. Ready for a linear model.
+    * **Array, ACTB/B2M:** one bell-shaped log2 intensity. Ready for a linear model.
     * **RNA-seq raw counts:** clumped by experiment, because raw counts mostly track
       **sequencing depth** (see the correlation with library size). Counts from samples
       of different depth are not comparable. The GLM handles this with the offset
       $\log s_j$ instead of dividing the data.
-    * **After CPM + log2, GAPDH looks fairly normal too.** High-count genes are in the
-      regime where NB ≈ log-normal, so for them the distinction is small.
-    * The difference shows up for **low-count genes**. Try TBP or GUSB, or type a
-      chemokine like `CXCL10` or `CCL19`: discreteness, zeros, and a variance set by the
-      count level. Most genes in a typical RNA-seq experiment are in this regime.
+    * **Normalized counts** remove the depth effect but ACTB, B2M, HPRT1 are still
+      right-skewed with a long upper tail: biological variation is multiplicative, so counts
+      are roughly log-normal, not normal. (Taking log2 would make them look normal again,
+      which is why log-transformed counts hide the point.)
+    * **GAPDH is the exception:** it barely varies (CV ≈ 0.3), and when the spread is that
+      small a log-normal is indistinguishable from a normal. The more a gene varies, the
+      more skewed its counts. The panel below checks this for every gene.
     """)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### All genes at once: how skewed is each gene across samples?
+
+    One gene is an anecdote. For every expressed gene, compute the **skewness** of its values
+    across all samples: 0 for a symmetric (normal-like) distribution, > 0 for a long right
+    tail.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    **Code: genome-wide skewness.** Keep array genes above the 30th percentile of mean intensity (drops probes at background) and RNA-seq genes with median normalized count > 10. Compute each gene's skewness across all samples (array: log2 intensity; RNA-seq: normalized counts, no log) and overlay the two histograms.
+    """)
+    return
+
+
+@app.cell
+def _(COLORS, arr_genes, mo, np, plt, seq_norm, stats):
+    _am = arr_genes.mean(axis=1)
+    _arr = arr_genes[_am > _am.quantile(0.3)]
+    _seq = seq_norm[seq_norm.median(axis=1) > 10]
+    _sk_a = stats.skew(_arr.values, axis=1)
+    _sk_s = stats.skew(_seq.values, axis=1)
+
+    _fig, _ax = plt.subplots(figsize=(7, 3.6))
+    _bins = np.linspace(-3, 6, 80)
+    _ax.hist(np.clip(_sk_a, -3, 6), bins=_bins, alpha=0.6, color=COLORS["array"], density=True,
+             label=f"array, log2 intensity ({len(_sk_a):,} genes, median {np.median(_sk_a):.2f})")
+    _ax.hist(np.clip(_sk_s, -3, 6), bins=_bins, alpha=0.6, color=COLORS["seq"], density=True,
+             label=f"RNA-seq, normalized counts ({len(_sk_s):,} genes, median {np.median(_sk_s):.2f})")
+    _ax.axvline(0, color="k", lw=0.8)
+    _ax.set(xlabel="skewness across samples", yticks=[], title="Per-gene skewness")
+    _ax.legend(frameon=False, fontsize=8)
+    _fig.tight_layout()
+    mo.vstack([
+        _fig,
+        mo.md("Array genes center on 0 (symmetric). RNA-seq counts are shifted right: most genes "
+              "have a long upper tail, as expected for multiplicative (log-normal-like) variation on "
+              "a count scale. Caveat: both pools mix conditions, so some skew comes from biology "
+              "(e.g. induced genes), which affects both technologies."),
+    ])
     return
 
 
