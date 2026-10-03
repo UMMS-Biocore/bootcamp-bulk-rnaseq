@@ -1,14 +1,18 @@
 # Bootcamp session 4: bulk RNA-seq, why DE uses models
 
-Marimo notebook: `de_models.py`
+Marimo notebooks, in order:
+
+1. `01_distributions.py`: arrays vs RNA-seq (GAPDH/ACTB histograms, depth normalization, mean vs variance)
+2. `02_ttest_is_lm.py`: the t-test as a linear model; adding a batch term
+3. `03_counts_and_glm.py`: simulated qPCR/array/RNA-seq, negative binomial, GLM preview
 
 ```bash
 # with uv (installs dependencies from the notebook header)
-uvx marimo edit --sandbox de_models.py
+uvx marimo edit --sandbox 01_distributions.py
 
 # or with an existing environment
 pip install marimo numpy scipy statsmodels pandas matplotlib
-marimo edit de_models.py
+marimo edit .   # opens a file browser for all notebooks
 ```
 
 ## Data
